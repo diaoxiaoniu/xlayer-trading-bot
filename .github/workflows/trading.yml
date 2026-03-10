@@ -20,7 +20,8 @@ jobs:
       - name: Setup
         run: curl -sSL https://raw.githubusercontent.com/okx/onchainos-skills/main/install.sh | bash
 
-      - name: Get Price & Check Signals
+      - name: Get Price & Execute Swap
         env:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          PRIVATE_KEY: ${{ secrets.PRIVATE_KEY }}
         run: bash scripts/trading-bot.sh
