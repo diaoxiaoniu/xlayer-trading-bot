@@ -1,12 +1,14 @@
 #!/bin/bash
-# XLayer Trading Bot with Swap Quote
+# XLayer Trading Bot - Fully Automated
 
 export WALLET="${WALLET:-0x844e815218a78c2009b79ff778350e6cfe816df8}"
 export DISCORD_WEBHOOK="${DISCORD_WEBHOOK_URL:-}"
+export PRIVATE_KEY="${PRIVATE_KEY:-}"
 
 TOKEN="0xfdc4a45a4bf53957b2c73b1ff323d8cbe39118dd"  # TITAN
 USDC="0x74b7f16337b8972027f6196a17a631ac6de26d22"
 CHAIN="xlayer"
+BUY_AMOUNT="5000000"  # 5 USDC
 
 log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1"; }
 
@@ -20,7 +22,6 @@ discord() {
 
 log "Fetching price data..."
 
-# Get price info
 price_info=$(onchainos token price-info $TOKEN --chain $CHAIN 2>/dev/null)
 
 python3 << EOF
@@ -30,9 +31,11 @@ import subprocess
 
 WEBHOOK = os.environ.get('DISCORD_WEBHOOK', '')
 WALLET = os.environ.get('WALLET', '')
+PRIVATE_KEY = os.environ.get('PRIVATE_KEY', '')
 TOKEN = "$TOKEN"
 USDC = "$USDC"
 CHAIN = "$CHAIN"
+BUY_AMOUNT = "$BUY_AMOUNT"
 
 def send_discord(msg):
     if WEBHOOK:
@@ -44,6 +47,26 @@ def send_discord(msg):
         except:
             pass
 
+def execute_swap():
+    """Execute the swap if we have private key"""
+    if not PRIVATE_KEY or PRIVATE_KEY == '':
+        return None, "No private key"
+    
+    try:
+        # Get swap transaction data
+        result = subprocess.run(
+            ['onchainos', 'swap', 'swap',
+             '--from', USDC,
+             '--to', TOKEN,
+             '--amount', BUY_AMOUNT,
+             '--chain', CHAIN,
+             '--wallet', WALLET],
+            capture_output=True, text=True, timeout=60
+        )
+        return result.stdout, None
+    except Exception as e:
+        return None, str(e)
+
 try:
     d = json.loads('''$price_info''')
     if d.get('ok') and d.get('data'):
@@ -54,17 +77,15 @@ try:
         change_24h = float(info.get('priceChange24H', '0') or '0')
         
         buy_thresh = low_24h * 1.05
-        tp_price = price * 1.30
         
         msg = "XLayer Trading Bot\n"
         msg += f"TITAN: \${price:.4f}\n"
         msg += f"24h: {change_24h:+.2f}%\n"
         msg += f"Range: \${low_24h:.4f} - \${high_24h:.4f}\n"
         msg += f"Buy Threshold: \${buy_thresh:.4f}\n"
-        msg += f"TP Price: \${tp_price:.4f}\n"
         
         if price < buy_thresh:
-            msg += "\nBUY SIGNAL! Testing swap quote...\n"
+            msg += "\nBUY SIGNAL! Getting quote...\n"
             
             # Get swap quote
             try:
@@ -72,7 +93,7 @@ try:
                     ['onchainos', 'swap', 'quote',
                      '--from', USDC,
                      '--to', TOKEN,
-                     '--amount', '5000000',  # 5 USDC
+                     '--amount', BUY_AMOUNT,
                      '--chain', CHAIN],
                     capture_output=True, text=True, timeout=30
                 )
@@ -82,13 +103,24 @@ try:
                     msg += f"\nQuote (5 USDC -> TITAN):\n"
                     msg += f"  Output: {q.get('toTokenAmount', 'N/A')} TITAN\n"
                     msg += f"  Impact: {q.get('priceImpactPercent', 'N/A')}%\n"
-                    msg += f"  Gas: \${q.get('gasFee', 'N/A')}"
+                    
+                    # Execute swap if private key exists
+                    if PRIVATE_KEY and PRIVATE_KEY != '':
+                        msg += "\n\nExecuting swap...\n"
+                        swap_result, swap_err = execute_swap()
+                        if swap_err:
+                            msg += f"Swap Error: {swap_err}\n"
+                        else:
+                            msg += f"Swap Result: {swap_result[:200]}...\n"
+                            msg += "\n✅ SWAP EXECUTED!\n"
+                    else:
+                        msg += "\n⚠️ No private key - swap not executed\n"
                 else:
                     msg += f"\nQuote Error: {q_data.get('error', 'Unknown')}"
             except Exception as e:
-                msg += f"\nQuote Error: {str(e)[:100]}"
+                msg += f"\nError: {str(e)[:100]}"
         else:
-            msg += "\nNo signal"
+            msg += "\nNo signal - price above threshold"
         
         print(msg)
         send_discord(msg)
