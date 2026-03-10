@@ -1,9 +1,10 @@
 #!/bin/bash
-# XLayer Trading Bot - Fully Automated
+# XLayer Trading Bot - With OKX API Auto Trade
 
 export WALLET="${WALLET:-0x844e815218a78c2009b79ff778350e6cfe816df8}"
 export DISCORD_WEBHOOK="${DISCORD_WEBHOOK_URL:-}"
-export PRIVATE_KEY="${PRIVATE_KEY:-}"
+export OKX_API_KEY="${OKX_API_KEY:-}"
+export OKX_SECRET_KEY="${OKX_SECRET_KEY:-}"
 
 TOKEN="0xfdc4a45a4bf53957b2c73b1ff323d8cbe39118dd"  # TITAN
 USDC="0x74b7f16337b8972027f6196a17a631ac6de26d22"
@@ -31,7 +32,8 @@ import subprocess
 
 WEBHOOK = os.environ.get('DISCORD_WEBHOOK', '')
 WALLET = os.environ.get('WALLET', '')
-PRIVATE_KEY = os.environ.get('PRIVATE_KEY', '')
+API_KEY = os.environ.get('OKX_API_KEY', '')
+SECRET_KEY = os.environ.get('OKX_SECRET_KEY', '')
 TOKEN = "$TOKEN"
 USDC = "$USDC"
 CHAIN = "$CHAIN"
@@ -48,12 +50,11 @@ def send_discord(msg):
             pass
 
 def execute_swap():
-    """Execute the swap if we have private key"""
-    if not PRIVATE_KEY or PRIVATE_KEY == '':
-        return None, "No private key"
+    """Execute swap using OKX API"""
+    if not API_KEY or not SECRET_KEY:
+        return None, "No API keys"
     
     try:
-        # Get swap transaction data
         result = subprocess.run(
             ['onchainos', 'swap', 'swap',
              '--from', USDC,
@@ -61,6 +62,7 @@ def execute_swap():
              '--amount', BUY_AMOUNT,
              '--chain', CHAIN,
              '--wallet', WALLET],
+            env={**os.environ, 'OKX_API_KEY': API_KEY, 'OKX_SECRET_KEY': SECRET_KEY},
             capture_output=True, text=True, timeout=60
         )
         return result.stdout, None
@@ -85,7 +87,7 @@ try:
         msg += f"Buy Threshold: \${buy_thresh:.4f}\n"
         
         if price < buy_thresh:
-            msg += "\nBUY SIGNAL! Getting quote...\n"
+            msg += "\nBUY SIGNAL!\n"
             
             # Get swap quote
             try:
@@ -101,20 +103,29 @@ try:
                 if q_data.get('ok'):
                     q = q_data['data'][0]
                     msg += f"\nQuote (5 USDC -> TITAN):\n"
-                    msg += f"  Output: {q.get('toTokenAmount', 'N/A')} TITAN\n"
+                    msg += f"  Output: {q.get('toTokenAmount', 'N/A')}\n"
                     msg += f"  Impact: {q.get('priceImpactPercent', 'N/A')}%\n"
                     
-                    # Execute swap if private key exists
-                    if PRIVATE_KEY and PRIVATE_KEY != '':
-                        msg += "\n\nExecuting swap...\n"
+                    # Execute swap with API
+                    if API_KEY and SECRET_KEY:
+                        msg += "\nExecuting swap with OKX API...\n"
                         swap_result, swap_err = execute_swap()
                         if swap_err:
-                            msg += f"Swap Error: {swap_err}\n"
+                            msg += f"Error: {swap_err}\n"
                         else:
-                            msg += f"Swap Result: {swap_result[:200]}...\n"
-                            msg += "\n✅ SWAP EXECUTED!\n"
+                            swap_data = json.loads(swap_result)
+                            if swap_data.get('ok'):
+                                data = swap_data.get('data', [{}])[0]
+                                if 'orderId' in data:
+                                    msg += f"\n✅ ORDER PLACED! Order ID: {data['orderId']}\n"
+                                elif 'txHash' in data:
+                                    msg += f"\n✅ SWAP EXECUTED! Tx: {data['txHash'][:20]}...\n"
+                                else:
+                                    msg += f"\n✅ Swap Data: {str(data)[:100]}\n"
+                            else:
+                                msg += f"\nSwap Result: {swap_result[:200]}\n"
                     else:
-                        msg += "\n⚠️ No private key - swap not executed\n"
+                        msg += "\n⚠️ No API keys - cannot execute\n"
                 else:
                     msg += f"\nQuote Error: {q_data.get('error', 'Unknown')}"
             except Exception as e:
