@@ -44,3 +44,4 @@ Automated crypto trading bot running on GitHub Actions.
 - 加密货币交易有风险
 - 使用前请确保了解相关风险
 - 建议先用小额测试
+test
