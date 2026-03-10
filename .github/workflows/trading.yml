@@ -2,11 +2,6 @@ name: XLayer Trading Bot
 
 on:
   workflow_dispatch:
-    inputs:
-      action:
-        description: 'Manual action'
-        required: false
-        default: 'trade'
   schedule:
     - cron: '*/5 * * * *'
 
@@ -84,10 +79,10 @@ try:
         print(msg)
         send_discord(msg)
     else:
-        print("❌ No data")
+        print("No data")
         
 except Exception as e:
-    print(f"❌ Error: {e}")
-    send_discord(f"❌ Error: {e}")
+    print(f"Error: {e}")
+    send_discord(f"Error: {e}")
 
 PYEOF
