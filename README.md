@@ -1,40 +1,46 @@
 # XLayer Trading Bot
 
-Automated trading bot for XLayer DEX using OKX Skills.
+Automated crypto trading bot running on GitHub Actions.
 
-## Features
+## 📋 功能
 
-- 📊 **Price Monitoring** - Real-time price alerts
-- 🤖 **Auto Trading** - Grid trading strategy  
-- 📈 **Take Profit / Stop Loss** - Automatic exit
-- 🔔 **Discord Notifications** - Trade alerts
+- 🤖 自动交易策略 (网格交易)
+- 📊 价格监控与信号检测
+- 🔔 Discord 实时通知
+- 💰 支持 XLayer DEX
 
-## Setup
+## 🚀 快速开始
 
-1. Install OKX Skills:
-```bash
-git clone https://github.com/okx/onchainos-skills.git
-curl -sSL https://raw.githubusercontent.com/okx/onchainos-skills/main/install.sh | sh
+### 1. 配置 Secrets
+
+在 GitHub 仓库 Settings → Secrets 中添加：
+
+| Secret Name | 说明 |
+|-------------|------|
+| `DISCORD_WEBHOOK_URL` | Discord Webhook URL |
+| `WALLET_ADDRESS` | 你的钱包地址 |
+
+### 2. 运行工作流
+
+工作流会自动每 5 分钟运行一次，也可以手动触发。
+
+## 📁 文件结构
+
+```
+.
+├── .github/
+│   └── workflows/
+│       └── trading.yml    # GitHub Actions 工作流
+├── scripts/
+│   └── trading-bot.sh     # 主交易脚本
+├── config/
+│   └── config.env         # 配置文件
+└── README.md
 ```
 
-2. Configure wallet:
-Edit `config/config.env` with your wallet address
+## ⚠️ 风险提示
 
-3. Run the bot:
-```bash
-bash scripts/trading-bot.sh
-```
-
-## Current Strategy
-
-### Trading Pair: TITAN/USDC
-
-| Parameter | Value |
-|----------|-------|
-| Entry | Price near 24h low + 5% |
-| Take Profit | +30% |
-| Stop Loss | -10% |
-
-## Disclaimer
-
-⚠️ Trading is risky. This bot is for educational purposes. Use at your own risk.
+- 此机器人仅供学习交流
+- 加密货币交易有风险
+- 使用前请确保了解相关风险
+- 建议先用小额测试

@@ -1,0 +1,110 @@
+name: XLayer Trading Bot
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: 'Manual action'
+        required: false
+        default: 'trade'
+  schedule:
+    # Run every 5 minutes
+    - cron: '*/5 * * * *'
+
+jobs:
+  trade:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup environment
+        run: |
+          # Install onchainos CLI
+          curl -sSL https://raw.githubusercontent.com/okx/onchainos-skills/main/install.sh | bash
+          
+      - name: Run Trading Bot
+        env:
+          WALLET_ADDRESS: ${{ secrets.WALLET_ADDRESS }}
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: |
+          # Set config
+          export WALLET="0x844e815218a78c2009b79ff778350e6cfe816df8"
+          export DISCORD_WEBHOOK="${{ secrets.DISCORD_WEBHOOK_URL }}"
+          
+          # Get price data
+          TOKEN="0xfdc4a45a4bf53957b2c73b1ff323d8cbe39118dd"
+          CHAIN="xlayer"
+          
+          # Fetch and analyze
+          price_info=$(onchainos token price-info $TOKEN --chain $CHAIN)
+          
+          # Parse with Python
+          python3 << 'PYEOF'
+import json
+import os
+import sys
+from datetime import datetime
+
+# Discord webhook
+WEBHOOK = os.environ.get('DISCORD_WEBHOOK', '')
+WALLET = os.environ.get('WALLET', '')
+
+def send_discord(msg):
+    if WEBHOOK:
+        import urllib.request
+        data = json.dumps({"content": msg}).encode('utf-8')
+        req = urllib.request.Request(
+            WEBHOOK,
+            data=data,
+            headers={'Content-Type': 'application/json'}
+        )
+        try:
+            urllib.request.urlopen(req)
+        except:
+            pass
+
+try:
+    # Parse price data from shell
+    import subprocess
+    result = subprocess.run(
+        ['onchainos', 'token', 'price-info', '0xfdc4a45a4bf53957b2c73b1ff323d8cbe39118dd', '--chain', 'xlayer'],
+        capture_output=True, text=True
+    )
+    
+    data = json.loads(result.stdout)
+    
+    if data.get('ok') and data.get('data'):
+        info = data['data'][0]
+        price = float(info.get('price', '0') or '0')
+        low_24h = float(info.get('minPrice', '0') or '0')
+        high_24h = float(info.get('maxPrice', '0') or '0')
+        change_24h = float(info.get('priceChange24H', '0') or '0')
+        
+        # Strategy: Buy at 24h low + 5%
+        buy_thresh = low_24h * 1.05
+        
+        msg = f"""📊 XLayer Trading Bot Report
+━━━━━━━━━━━━━━━━━━━━
+💰 TITAN Price: ${price:.4f}
+📈 24h Change: {change_24h:+.2f}%
+📉 24h Range: ${low_24h:.4f} - ${high_24h:.4f}
+🎯 Buy Threshold: ${buy_thresh:.4f} (24h low + 5%)"""
+        
+        # Check signals
+        if price < buy_thresh:
+            msg += "\n\n🟢 BUY SIGNAL! Price below threshold"
+        else:
+            msg += "\n\n🟡 No signal - price above threshold"
+        
+        print(msg)
+        send_discord(msg)
+    else:
+        print("❌ Failed to get price data")
+        
+except Exception as e:
+    print(f"❌ Error: {e}")
+    send_discord(f"❌ Trading Bot Error: {e}")
+
+PYEOF
