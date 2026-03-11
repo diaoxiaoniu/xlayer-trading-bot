@@ -17,13 +17,20 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install web3 eth-account
+
       - name: Setup
         run: curl -sSL https://raw.githubusercontent.com/okx/onchainos-skills/main/install.sh | bash
 
       - name: Execute Swap
         env:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
-          OKX_API_KEY: ${{ secrets.OKX_API_KEY }}
-          OKX_SECRET_KEY: ${{ secrets.OKX_SECRET_KEY }}
+          PRIVATE_KEY: ${{ secrets.PRIVATE_KEY }}
           WALLET_ADDRESS: ${{ secrets.WALLET_ADDRESS }}
         run: bash scripts/trading-bot.sh
