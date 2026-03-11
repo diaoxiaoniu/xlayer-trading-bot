@@ -1,5 +1,5 @@
 #!/bin/bash
-# XLayer Trading Bot - With Private Key Signing
+# XLayer Trading Bot - Using OKX Gateway for broadcast
 
 export WALLET="${WALLET:-0x844e815218a78c2009b79ff778350e6cfe816df8}"
 export DISCORD_WEBHOOK="${DISCORD_WEBHOOK_URL:-}"
@@ -9,9 +9,6 @@ TOKEN="0xfdc4a45a4bf53957b2c73b1ff323d8cbe39118dd"
 USDC="0x74b7f16337b8972027f6196a17a631ac6de26d22"
 CHAIN="xlayer"
 BUY_AMOUNT="5000000"
-
-# XLayer RPC (free public RPC)
-RPC_URL="https://xlayer-rpc.okbtc.xyz"
 
 log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1"; }
 
@@ -30,7 +27,6 @@ python3 << 'PYEOF'
 import json
 import os
 import subprocess
-from web3 import Web3
 
 WEBHOOK = os.environ.get('DISCORD_WEBHOOK', '')
 WALLET = os.environ.get('WALLET', '')
@@ -39,7 +35,6 @@ TOKEN = "0xfdc4a45a4bf53957b2c73b1ff323d8cbe39118dd"
 USDC = "0x74b7f16337b8972027f6196a17a631ac6de26d22"
 CHAIN = "xlayer"
 BUY_AMOUNT = "5000000"
-RPC_URL = "https://xlayer-rpc.okbtc.xyz"
 
 def send_discord(msg):
     if WEBHOOK:
@@ -51,12 +46,12 @@ def send_discord(msg):
         except:
             pass
 
-def sign_and_send_tx():
+def get_swap_and_broadcast():
     if not PRIVATE_KEY or len(PRIVATE_KEY) < 32:
-        return None, "Invalid private key"
+        return None, "No private key"
     
     try:
-        # Get swap tx data
+        # Get swap transaction data
         result = subprocess.run(
             ['onchainos', 'swap', 'swap', '--from', USDC, '--to', TOKEN,
              '--amount', BUY_AMOUNT, '--chain', CHAIN, '--wallet', WALLET],
@@ -67,31 +62,13 @@ def sign_and_send_tx():
         if not data.get('ok'):
             return None, f"Swap error: {data.get('error')}"
         
-        tx_data = data['data'][0].get('tx', {})
-        if not tx_data:
-            return None, "No tx data"
+        # Try gateway broadcast
+        result2 = subprocess.run(
+            ['onchainos', 'gateway', 'broadcast', '--signed-tx', result.stdout, '--address', WALLET, '--chain', CHAIN],
+            capture_output=True, text=True, timeout=60
+        )
         
-        # Connect to RPC and sign
-        w3 = Web3(Web3.HTTPProvider(RPC_URL))
-        if not w3.is_connected():
-            return None, f"Cannot connect to RPC: {RPC_URL}"
-        
-        account = w3.eth.account.from_key(PRIVATE_KEY)
-        
-        tx = {
-            'to': tx_data.get('to'),
-            'value': int(tx_data.get('value', '0'), 16) if isinstance(tx_data.get('value'), str) else tx_data.get('value', 0),
-            'gas': int(tx_data.get('gas'), 16) if isinstance(tx_data.get('gas'), str) else tx_data.get('gas', 21000),
-            'gasPrice': int(tx_data.get('gasPrice'), 16) if isinstance(tx_data.get('gasPrice'), str) else tx_data.get('gasPrice', w3.eth.gas_price),
-            'nonce': w3.eth.get_transaction_count(account.address),
-            'data': tx_data.get('data', '0x'),
-            'chainId': 196
-        }
-        
-        signed = account.sign_transaction(tx)
-        tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
-        
-        return w3.to_hex(tx_hash), None
+        return result2.stdout, None
         
     except Exception as e:
         return None, str(e)
@@ -118,6 +95,7 @@ try:
         if price < buy_thresh:
             msg += "\nBUY SIGNAL!\n"
             
+            # Get quote
             result = subprocess.run(
                 ['onchainos', 'swap', 'quote', '--from', USDC, '--to', TOKEN,
                  '--amount', BUY_AMOUNT, '--chain', CHAIN],
@@ -131,16 +109,16 @@ try:
                 msg += f"  Impact: {q.get('priceImpactPercent', 'N/A')}%\n"
                 
                 if PRIVATE_KEY and len(PRIVATE_KEY) > 32:
-                    msg += "\nExecuting swap...\n"
-                    tx_hash, err = sign_and_send_tx()
+                    msg += "\nTrying to broadcast...\n"
+                    broadcast_result, err = get_swap_and_broadcast()
                     if err:
                         msg += f"Error: {err}\n"
                     else:
-                        msg += f"\n✅ SWAP SUCCESS! Tx: {tx_hash}\n"
+                        msg += f"Result: {broadcast_result[:200]}\n"
                 else:
                     msg += "\n⚠️ No private key\n"
             else:
-                msg += f"\nQuote error: {q_data.get('error')}\n"
+                msg += f"\nQuote error\n"
         else:
             msg += "\nNo signal"
         
@@ -150,7 +128,5 @@ try:
         print("No price data")
 except Exception as e:
     print(f"Error: {e}")
-    import traceback
-    traceback.print_exc()
 
 PYEOF
