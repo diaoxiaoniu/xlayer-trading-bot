@@ -5,10 +5,13 @@ export WALLET="${WALLET:-0x844e815218a78c2009b79ff778350e6cfe816df8}"
 export DISCORD_WEBHOOK="${DISCORD_WEBHOOK_URL:-}"
 export PRIVATE_KEY="${PRIVATE_KEY:-}"
 
-TOKEN="0xfdc4a45a4bf53957b2c73b1ff323d8cbe39118dd"  # TITAN
+TOKEN="0xfdc4a45a4bf53957b2c73b1ff323d8cbe39118dd"
 USDC="0x74b7f16337b8972027f6196a17a631ac6de26d22"
 CHAIN="xlayer"
-BUY_AMOUNT="5000000"  # 5 USDC
+BUY_AMOUNT="5000000"
+
+# XLayer RPC (free public RPC)
+RPC_URL="https://xlayer-rpc.okbtc.xyz"
 
 log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1"; }
 
@@ -21,8 +24,6 @@ discord() {
 }
 
 log "Fetching price data..."
-
-# Get price
 onchainos token price-info $TOKEN --chain $CHAIN > /tmp/price.json 2>/dev/null
 
 python3 << 'PYEOF'
@@ -38,6 +39,7 @@ TOKEN = "0xfdc4a45a4bf53957b2c73b1ff323d8cbe39118dd"
 USDC = "0x74b7f16337b8972027f6196a17a631ac6de26d22"
 CHAIN = "xlayer"
 BUY_AMOUNT = "5000000"
+RPC_URL = "https://xlayer-rpc.okbtc.xyz"
 
 def send_discord(msg):
     if WEBHOOK:
@@ -50,7 +52,6 @@ def send_discord(msg):
             pass
 
 def sign_and_send_tx():
-    """Sign and send transaction using private key"""
     if not PRIVATE_KEY or len(PRIVATE_KEY) < 32:
         return None, "Invalid private key"
     
@@ -70,8 +71,11 @@ def sign_and_send_tx():
         if not tx_data:
             return None, "No tx data"
         
-        # Sign with private key
-        w3 = Web3()
+        # Connect to RPC and sign
+        w3 = Web3(Web3.HTTPProvider(RPC_URL))
+        if not w3.is_connected():
+            return None, f"Cannot connect to RPC: {RPC_URL}"
+        
         account = w3.eth.account.from_key(PRIVATE_KEY)
         
         tx = {
@@ -81,7 +85,7 @@ def sign_and_send_tx():
             'gasPrice': int(tx_data.get('gasPrice'), 16) if isinstance(tx_data.get('gasPrice'), str) else tx_data.get('gasPrice', w3.eth.gas_price),
             'nonce': w3.eth.get_transaction_count(account.address),
             'data': tx_data.get('data', '0x'),
-            'chainId': 196  # XLayer
+            'chainId': 196
         }
         
         signed = account.sign_transaction(tx)
@@ -114,7 +118,6 @@ try:
         if price < buy_thresh:
             msg += "\nBUY SIGNAL!\n"
             
-            # Get quote
             result = subprocess.run(
                 ['onchainos', 'swap', 'quote', '--from', USDC, '--to', TOKEN,
                  '--amount', BUY_AMOUNT, '--chain', CHAIN],
@@ -127,7 +130,6 @@ try:
                 msg += f"  Output: {q.get('toTokenAmount', 'N/A')}\n"
                 msg += f"  Impact: {q.get('priceImpactPercent', 'N/A')}%\n"
                 
-                # Execute swap if PRIVATE_KEY
                 if PRIVATE_KEY and len(PRIVATE_KEY) > 32:
                     msg += "\nExecuting swap...\n"
                     tx_hash, err = sign_and_send_tx()
