@@ -1,10 +1,9 @@
 #!/bin/bash
-# XLayer Trading Bot - With OKX API Auto Trade
+# XLayer Trading Bot - With Private Key Signing
 
 export WALLET="${WALLET:-0x844e815218a78c2009b79ff778350e6cfe816df8}"
 export DISCORD_WEBHOOK="${DISCORD_WEBHOOK_URL:-}"
-export OKX_API_KEY="${OKX_API_KEY:-}"
-export OKX_SECRET_KEY="${OKX_SECRET_KEY:-}"
+export PRIVATE_KEY="${PRIVATE_KEY:-}"
 
 TOKEN="0xfdc4a45a4bf53957b2c73b1ff323d8cbe39118dd"  # TITAN
 USDC="0x74b7f16337b8972027f6196a17a631ac6de26d22"
@@ -23,21 +22,22 @@ discord() {
 
 log "Fetching price data..."
 
-price_info=$(onchainos token price-info $TOKEN --chain $CHAIN 2>/dev/null)
+# Get price
+onchainos token price-info $TOKEN --chain $CHAIN > /tmp/price.json 2>/dev/null
 
-python3 << EOF
+python3 << 'PYEOF'
 import json
 import os
 import subprocess
+from web3 import Web3
 
 WEBHOOK = os.environ.get('DISCORD_WEBHOOK', '')
 WALLET = os.environ.get('WALLET', '')
-API_KEY = os.environ.get('OKX_API_KEY', '')
-SECRET_KEY = os.environ.get('OKX_SECRET_KEY', '')
-TOKEN = "$TOKEN"
-USDC = "$USDC"
-CHAIN = "$CHAIN"
-BUY_AMOUNT = "$BUY_AMOUNT"
+PRIVATE_KEY = os.environ.get('PRIVATE_KEY', '')
+TOKEN = "0xfdc4a45a4bf53957b2c73b1ff323d8cbe39118dd"
+USDC = "0x74b7f16337b8972027f6196a17a631ac6de26d22"
+CHAIN = "xlayer"
+BUY_AMOUNT = "5000000"
 
 def send_discord(msg):
     if WEBHOOK:
@@ -49,28 +49,53 @@ def send_discord(msg):
         except:
             pass
 
-def execute_swap():
-    """Execute swap using OKX API"""
-    if not API_KEY or not SECRET_KEY:
-        return None, "No API keys"
+def sign_and_send_tx():
+    """Sign and send transaction using private key"""
+    if not PRIVATE_KEY or len(PRIVATE_KEY) < 32:
+        return None, "Invalid private key"
     
     try:
+        # Get swap tx data
         result = subprocess.run(
-            ['onchainos', 'swap', 'swap',
-             '--from', USDC,
-             '--to', TOKEN,
-             '--amount', BUY_AMOUNT,
-             '--chain', CHAIN,
-             '--wallet', WALLET],
-            env={**os.environ, 'OKX_API_KEY': API_KEY, 'OKX_SECRET_KEY': SECRET_KEY},
+            ['onchainos', 'swap', 'swap', '--from', USDC, '--to', TOKEN,
+             '--amount', BUY_AMOUNT, '--chain', CHAIN, '--wallet', WALLET],
             capture_output=True, text=True, timeout=60
         )
-        return result.stdout, None
+        
+        data = json.loads(result.stdout)
+        if not data.get('ok'):
+            return None, f"Swap error: {data.get('error')}"
+        
+        tx_data = data['data'][0].get('tx', {})
+        if not tx_data:
+            return None, "No tx data"
+        
+        # Sign with private key
+        w3 = Web3()
+        account = w3.eth.account.from_key(PRIVATE_KEY)
+        
+        tx = {
+            'to': tx_data.get('to'),
+            'value': int(tx_data.get('value', '0'), 16) if isinstance(tx_data.get('value'), str) else tx_data.get('value', 0),
+            'gas': int(tx_data.get('gas'), 16) if isinstance(tx_data.get('gas'), str) else tx_data.get('gas', 21000),
+            'gasPrice': int(tx_data.get('gasPrice'), 16) if isinstance(tx_data.get('gasPrice'), str) else tx_data.get('gasPrice', w3.eth.gas_price),
+            'nonce': w3.eth.get_transaction_count(account.address),
+            'data': tx_data.get('data', '0x'),
+            'chainId': 196  # XLayer
+        }
+        
+        signed = account.sign_transaction(tx)
+        tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
+        
+        return w3.to_hex(tx_hash), None
+        
     except Exception as e:
         return None, str(e)
 
 try:
-    d = json.loads('''$price_info''')
+    with open('/tmp/price.json') as f:
+        d = json.load(f)
+    
     if d.get('ok') and d.get('data'):
         info = d['data'][0]
         price = float(info.get('price', '0') or '0')
@@ -80,66 +105,50 @@ try:
         
         buy_thresh = low_24h * 1.05
         
-        msg = "XLayer Trading Bot\n"
-        msg += f"TITAN: \${price:.4f}\n"
+        msg = f"XLayer Trading Bot\n"
+        msg += f"TITAN: ${price:.4f}\n"
         msg += f"24h: {change_24h:+.2f}%\n"
-        msg += f"Range: \${low_24h:.4f} - \${high_24h:.4f}\n"
-        msg += f"Buy Threshold: \${buy_thresh:.4f}\n"
+        msg += f"Range: ${low_24h:.4f} - ${high_24h:.4f}\n"
+        msg += f"Buy Threshold: ${buy_thresh:.4f}\n"
         
         if price < buy_thresh:
             msg += "\nBUY SIGNAL!\n"
             
-            # Get swap quote
-            try:
-                result = subprocess.run(
-                    ['onchainos', 'swap', 'quote',
-                     '--from', USDC,
-                     '--to', TOKEN,
-                     '--amount', BUY_AMOUNT,
-                     '--chain', CHAIN],
-                    capture_output=True, text=True, timeout=30
-                )
-                q_data = json.loads(result.stdout)
-                if q_data.get('ok'):
-                    q = q_data['data'][0]
-                    msg += f"\nQuote (5 USDC -> TITAN):\n"
-                    msg += f"  Output: {q.get('toTokenAmount', 'N/A')}\n"
-                    msg += f"  Impact: {q.get('priceImpactPercent', 'N/A')}%\n"
-                    
-                    # Execute swap with API
-                    if API_KEY and SECRET_KEY:
-                        msg += "\nExecuting swap with OKX API...\n"
-                        swap_result, swap_err = execute_swap()
-                        if swap_err:
-                            msg += f"Error: {swap_err}\n"
-                        else:
-                            swap_data = json.loads(swap_result)
-                            if swap_data.get('ok'):
-                                data = swap_data.get('data', [{}])[0]
-                                if 'orderId' in data:
-                                    msg += f"\n✅ ORDER PLACED! Order ID: {data['orderId']}\n"
-                                elif 'txHash' in data:
-                                    msg += f"\n✅ SWAP EXECUTED! Tx: {data['txHash'][:20]}...\n"
-                                else:
-                                    msg += f"\n✅ Swap Data: {str(data)[:100]}\n"
-                            else:
-                                msg += f"\nSwap Result: {swap_result[:200]}\n"
+            # Get quote
+            result = subprocess.run(
+                ['onchainos', 'swap', 'quote', '--from', USDC, '--to', TOKEN,
+                 '--amount', BUY_AMOUNT, '--chain', CHAIN],
+                capture_output=True, text=True, timeout=30
+            )
+            q_data = json.loads(result.stdout)
+            if q_data.get('ok'):
+                q = q_data['data'][0]
+                msg += f"\nQuote (5 USDC -> TITAN):\n"
+                msg += f"  Output: {q.get('toTokenAmount', 'N/A')}\n"
+                msg += f"  Impact: {q.get('priceImpactPercent', 'N/A')}%\n"
+                
+                # Execute swap if PRIVATE_KEY
+                if PRIVATE_KEY and len(PRIVATE_KEY) > 32:
+                    msg += "\nExecuting swap...\n"
+                    tx_hash, err = sign_and_send_tx()
+                    if err:
+                        msg += f"Error: {err}\n"
                     else:
-                        msg += "\n⚠️ No API keys - cannot execute\n"
+                        msg += f"\n✅ SWAP SUCCESS! Tx: {tx_hash}\n"
                 else:
-                    msg += f"\nQuote Error: {q_data.get('error', 'Unknown')}"
-            except Exception as e:
-                msg += f"\nError: {str(e)[:100]}"
+                    msg += "\n⚠️ No private key\n"
+            else:
+                msg += f"\nQuote error: {q_data.get('error')}\n"
         else:
-            msg += "\nNo signal - price above threshold"
+            msg += "\nNo signal"
         
         print(msg)
         send_discord(msg)
     else:
         print("No price data")
-        
 except Exception as e:
     print(f"Error: {e}")
-    send_discord(f"Error: {e}")
+    import traceback
+    traceback.print_exc()
 
-EOF
+PYEOF
